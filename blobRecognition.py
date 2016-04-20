@@ -6,8 +6,8 @@ lighterImg = "./lighterImg.jpg"
 
 def maskLighter(img):
     mask = cv2.inRange(img, redLower, redUpper)
-    mask = cv2.erode(mask, None, iterations=3)
-    mask = cv2.dilate(mask, None, iterations=3)
+    mask = cv2.erode(mask, None, iterations=2)
+    mask = cv2.dilate(mask, None, iterations=2)
     return mask
 
 def getImage():
