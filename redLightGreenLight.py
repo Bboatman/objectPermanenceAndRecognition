@@ -32,24 +32,32 @@ def findEntities(firstFrame, prevFrame, newFrame):
 	for cont in contours:
 		area = cv2.contourArea(cont)
 		bounds.append(cv2.boundingRect(cont))
-	bounds = entityDetector(contours, bounds, newFrame)
+	bounds = entityDetector(bounds, newFrame)
 	return bounds
+
+def grabSample(img, boundingRect):
+	crop = img[boundingRect[1]: boundingRect[1]+boundingRect[3], boundingRect[0]: boundingRect[0] + boundingRect[2]]
+	hist,bins = np.histogram(crop.ravel(),256,[0,256])
+	return crop, hist.tolist()
 	
-def entityDetector(contours, boundingRects, img):
-	# Check for cluster breaking state
+def entityDetector(boundingRects, img):
+	# Check for cluster breaking state, if only one pt, can't cluster it
 	if len(boundingRects) <= 1:
 		return boundingRects
 
 	# Keep track of center points of all contours
 	cropArr = []
 	for rectangle in boundingRects:
-		crop = img[rectangle[1]: rectangle[1]+rectangle[3], rectangle[0]: rectangle[0] + rectangle[2]]
-		hist,bins = np.histogram(crop.ravel(),256,[0,256])
-		histList = hist.tolist()
+		crop, histList = grabSample(img, rectangle)
 		histList.append(rectangle[0] + rectangle[2] // 2)
 		histList.append(rectangle[1] + rectangle[3] // 2)
 		cropArr.append(histList)
 
+	bounds = clusterRelatedContours(cropArr, boundingRects)
+	return bounds
+	
+
+def clusterRelatedContours(cropArr, boundingRects):
 	# Set up clustering
 	pref = [3 for x in range(256)]
 	pref.append(5)
@@ -68,57 +76,61 @@ def entityDetector(contours, boundingRects, img):
 		entityArray[index][1] = rect[1] if rect[1] < entityArray[index][1] else entityArray[index][1]
 		entityArray[index][2] = w if w > entityArray[index][2] else entityArray[index][2]
 		entityArray[index][3] = h if h > entityArray[index][3] else entityArray[index][3]
-
 	return entityArray
 
-userList = []
-camera = cv2.VideoCapture(0)
-firstFrame = None
-prevFrame = None
-while True:
-	success, frame = camera.read()
-	if firstFrame is None:
-		firstFrame = frame
-	if prevFrame is None:
+def getPlayer(playerList, histogram):
+	# Create first user
+	if len(playerList) == 0:
+		newColor = (random.randint(0, 255), random.randint(0,255), random.randint(0,255))
+		playerList.append((histogram, newColor))
+		return player, newColor
+
+	matched = False
+	# Iterate through possible users and decide which one this is
+	for player in playerList:
+		compHist = player[0]
+		result = 1 - spatial.distance.cosine(compHist, histogram)
+		if result > .6:
+			color = player[1]
+			matched = True
+			break
+
+	# If user hasn't been seen, add to list
+	if not matched:
+		color = (random.randint(0, 255), random.randint(0,255), random.randint(0,255))
+		playerList.append((histogram, color))
+	return playerList, color
+
+def main():
+	# Intialize
+	userList = []
+	camera = cv2.VideoCapture(0)
+	firstFrame = None
+	prevFrame = None
+	while True:
+		success, frame = camera.read()
+		if firstFrame is None:
+			firstFrame = frame
+			prevFrame = frame
+
+		# If you can't get camera, don't even try
+		if not success:
+			break
+
+		# Match each bounding box to a player
+		bounds = findEntities(firstFrame, prevFrame, frame)
+		if len(bounds) > 0:
+			for bound in bounds:
+				crop, hist = grabSample(frame, bound)
+				userList, color = getPlayer(userList, hist)
+				rectangle = cv2.rectangle(frame, (bound[0], bound[1]), (bound[0] + bound[2], bound[1] + bound[3]), color)
+		
+		# Display live entity tracking and destroy on keypress
+		cv2.imshow("Video!", frame)
 		prevFrame = frame
-	if not success:
-		break
+		key = cv2.waitKey(1)
+		if key != -1:
+			cv2.destroyAllWindows()
+			break
 
-	bounds = getNewEntities(firstFrame, prevFrame, frame)
-
-	if len(bounds) > 0:
-		for bound in bounds:
-			crop = frame[bound[1]: bound[1]+bound[3], bound[0]: bound[0] + bound[2]]
-			hist,bins = np.histogram(crop.ravel(),256,[0,256])
-
-			# Create first user
-			if len(userList) == 0:
-				newhistList = hist.tolist()
-				addcolor = (random.randint(0, 255), random.randint(0,255), random.randint(0,255))
-				userList.append((newhistList,addcolor))
-
-			matched = False
-			# Iterate through possible users and decide which one this is
-			for user in userList:
-				compHist = user[0]
-				testHist = hist.tolist()
-				result = 1 - spatial.distance.cosine(compHist, testHist)
-				if result > .5:
-					color = user[1]
-					matched = True
-					break
-
-			# If user hasn't been seen, add to list
-			if not matched:
-				histList = hist.tolist()
-				color = (random.randint(0, 255), random.randint(0,255), random.randint(0,255))
-				userList.append((histList,color))
-			rectangle = cv2.rectangle(frame, (bound[0], bound[1]), (bound[0] + bound[2], bound[1] + bound[3]), color)
-
-	# Display live entity tracking and destroy on keypress
-	cv2.imshow("Video!", frame)
-	prevFrame = frame
-	key = cv2.waitKey(1)
-	if key != -1:
-		cv2.destroyAllWindows()
-		break
+main()
